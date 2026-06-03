@@ -94,3 +94,59 @@ python chatchat/cli.py start -a
 ```
 
 如需调用 API，请参考 [API 使用说明](api.md)
+
+## 6. 本地源码安装调试指南
+
+本节提供在本地从源码安装和调试的完整步骤，适用于 macOS 和 Linux 环境。
+
+### 6.1 环境要求
+
+- Python 3.10 或 3.11（项目不支持 Python 3.12+）
+- Git
+
+### 6.2 安装步骤
+
+```bash
+# 1. 克隆项目
+git clone https://github.com/chatchat-space/Langchain-Chatchat.git
+cd Langchain-Chatchat
+
+# 2. 创建 Python 3.11 虚拟环境
+python3.11 -m venv libs/chatchat-server/zhwVenv
+source libs/chatchat-server/zhwVenv/bin/activate
+
+# 3. 升级 pip 和构建工具（指定兼容版本）
+pip3 install --upgrade pip setuptools
+pip3 install wheel==0.43.0
+pip3 install "packaging>=23.2,<24.0"
+
+# 4. 安装 humanlayer（镜像源可能没有）
+pip3 install humanlayer --index-url https://pypi.org/simple/
+
+# 5. 安装项目依赖
+cd libs/chatchat-server
+pip3 install -e .
+```
+
+### 6.3 常见问题
+
+| 问题 | 原因 | 解决方案 |
+|------|------|----------|
+| `Python 3.x.x not in '<3.12,>=3.10'` | Python 版本不兼容 | 使用 Python 3.10 或 3.11 |
+| `No matching distribution found for humanlayer==0.7.6` | 镜像源未同步或版本不存在 | 从官方 PyPI 安装：`pip3 install humanlayer --index-url https://pypi.org/simple/` |
+| `ModuleNotFoundError: No module named 'pkg_resources'` | setuptools 缺失 | `pip3 install setuptools` |
+| `wheel requires packaging>=24.0` | wheel 版本过高 | `pip3 install wheel==0.43.0` |
+| `langchain-core requires packaging<24.0` | packaging 版本过高 | `pip3 install "packaging>=23.2,<24.0"` |
+
+### 6.4 验证安装
+
+```bash
+# 检查 Python 路径（应指向虚拟环境）
+which python3
+
+# 检查已安装的包数量
+pip3 list | wc -l
+
+# 检查 langchain-chatchat 是否安装成功
+pip3 show langchain-chatchat
+```
