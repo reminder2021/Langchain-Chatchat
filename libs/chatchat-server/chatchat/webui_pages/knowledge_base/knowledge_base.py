@@ -371,6 +371,48 @@ def knowledge_base_page(api: ApiRequest, is_lite: bool = None):
                 knowledge_base_name=selected_kb, file_name=file_name
             )
 
+            # 如果文档为空，显示添加知识界面
+            if not docs:
+                st.info(f"文件 '{file_name}' 暂无知识内容，您可以手动添加。")
+                
+                # 添加新知识的输入区域
+                new_content = st.text_area(
+                    "输入知识内容",
+                    height=200,
+                    placeholder="请输入要添加的知识内容...",
+                    key="new_knowledge_content"
+                )
+                
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    if st.button("添加知识", type="primary"):
+                        if new_content.strip():
+                            # 构建新文档
+                            new_doc = {
+                                "page_content": new_content.strip(),
+                                "type": "custom",
+                                "metadata": {"source": file_name}
+                            }
+                            
+                            # 调用 API 添加文档
+                            if api.update_kb_docs(
+                                knowledge_base_name=selected_kb,
+                                file_names=[file_name],
+                                docs={file_name: [new_doc]},
+                            ):
+                                st.toast("添加知识成功")
+                                st.rerun()
+                            else:
+                                st.toast("添加知识失败")
+                        else:
+                            st.toast("请输入知识内容")
+                
+                with col2:
+                    if st.button("返回文件列表"):
+                        st.rerun()
+                
+                return  # 提前返回，不显示下面的编辑界面
+
             data = [
                 {
                     "seq": i + 1,
