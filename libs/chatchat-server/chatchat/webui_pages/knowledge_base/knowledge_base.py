@@ -390,7 +390,7 @@ def knowledge_base_page(api: ApiRequest, is_lite: bool = None):
                             # 构建新文档
                             new_doc = {
                                 "page_content": new_content.strip(),
-                                "type": "custom",
+                                "type": "Document",
                                 "metadata": {"source": file_name}
                             }
                             
@@ -455,6 +455,49 @@ def knowledge_base_page(api: ApiRequest, is_lite: bool = None):
             )
             gb.configure_selection()
             edit_docs = AgGrid(df, gb.build(), fit_columns_on_grid_load=True)
+
+            # 添加新知识的区域
+            with st.expander("添加新知识", expanded=False):
+                new_content = st.text_area(
+                    "输入知识内容",
+                    height=150,
+                    placeholder="请输入要添加的知识内容...",
+                    key="add_new_knowledge_content"
+                )
+                if st.button("添加", key="add_new_knowledge_btn"):
+                    if new_content.strip():
+                        # 构建新文档
+                        new_doc = {
+                            "page_content": new_content.strip(),
+                            "type": "Document",
+                            "metadata": {"source": file_name}
+                        }
+                        
+                        # 获取当前所有文档
+                        current_docs = []
+                        for index, row in edit_docs.data.iterrows():
+                            if row["to_del"] not in ["Y", "y", 1]:
+                                current_docs.append({
+                                    "page_content": row["page_content"],
+                                    "type": row["type"],
+                                    "metadata": json.loads(row["metadata"]),
+                                })
+                        
+                        # 添加新文档
+                        current_docs.append(new_doc)
+                        
+                        # 调用 API 更新
+                        if api.update_kb_docs(
+                            knowledge_base_name=selected_kb,
+                            file_names=[file_name],
+                            docs={file_name: current_docs},
+                        ):
+                            st.toast("添加知识成功")
+                            st.rerun()
+                        else:
+                            st.toast("添加知识失败")
+                    else:
+                        st.toast("请输入知识内容")
 
             if st.button("保存更改"):
                 origin_docs = {
