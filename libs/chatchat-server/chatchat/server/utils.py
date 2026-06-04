@@ -376,6 +376,7 @@ def get_Embeddings(
                 openai_proxy=model_info.get("api_proxy"),
             )
         if model_info.get("platform_type") == "openai":
+            params["chunk_size"] = 64  # 智谱AI等平台限制单次请求最多64条
             return OpenAIEmbeddings(**params)
         elif model_info.get("platform_type") == "ollama":
             return OllamaEmbeddings(

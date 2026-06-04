@@ -423,24 +423,34 @@ def knowledge_base_page(api: ApiRequest, is_lite: bool = None):
                     }
                     for x in docs
                 }
-                changed_docs = []
+                # 收集所有需要保留的文档（排除标记删除的）
+                all_docs = []
+                has_changes = False
                 for index, row in edit_docs.data.iterrows():
+                    # 跳过标记删除的文档
+                    if row["to_del"] in ["Y", "y", 1]:
+                        has_changes = True
+                        continue
+                    
                     origin_doc = origin_docs[row["id"]]
+                    # 检查是否有修改
                     if row["page_content"] != origin_doc["page_content"]:
-                        if row["to_del"] not in ["Y", "y", 1]:
-                            changed_docs.append(
-                                {
-                                    "page_content": row["page_content"],
-                                    "type": row["type"],
-                                    "metadata": json.loads(row["metadata"]),
-                                }
-                            )
+                        has_changes = True
+                    
+                    # 使用修改后的内容（如果未修改则使用原内容）
+                    all_docs.append(
+                        {
+                            "page_content": row["page_content"],
+                            "type": row["type"],
+                            "metadata": json.loads(row["metadata"]),
+                        }
+                    )
 
-                if changed_docs:
+                if has_changes:
                     if api.update_kb_docs(
                         knowledge_base_name=selected_kb,
                         file_names=[file_name],
-                        docs={file_name: changed_docs},
+                        docs={file_name: all_docs},
                     ):
                         st.toast("更新文档成功")
                     else:
