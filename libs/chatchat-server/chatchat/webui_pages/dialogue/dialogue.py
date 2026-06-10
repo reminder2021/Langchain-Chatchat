@@ -298,8 +298,9 @@ def dialogue_page(
                 label="当前会话：",
                 key="cur_conv_name",
                 # on_change=on_conv_change, # not work
-            )
-            chat_box.use_chat_name(conversation_name)
+            ) if conv_names else None
+            if conversation_name:
+                chat_box.use_chat_name(conversation_name)
             conversation_id = chat_box.context["uid"]
             if cols[0].button("新建", on_click=add_conv):
                 ...
@@ -511,6 +512,35 @@ def dialogue_page(
                             for img in d.tool_output.get("images", []):
                                 chat_box.insert_msg(Image(f"{api.base_url}/media/{img}"), pos=-2)
                         else:
+                            # 检查是否有debug_info（知识库问答调试信息）
+                            debug_info = getattr(d, "debug_info", None)
+                            if debug_info and isinstance(debug_info, dict):
+                                # 显示检索结果
+                                retrieved_docs = debug_info.get("retrieved_docs", [])
+                                if retrieved_docs:
+                                    debug_md = "### 检索结果\n\n"
+                                    for doc in retrieved_docs:
+                                        score = doc.get("score", "N/A")
+                                        score_str = f"{score:.4f}" if isinstance(score, (int, float)) else str(score)
+                                        debug_md += f"**[{doc['index']}]** (相关度: {score_str})\n\n"
+                                        debug_md += f"{doc['page_content'][:500]}\n\n---\n\n"
+                                    chat_box.insert_msg(
+                                        Markdown(debug_md, in_expander=True, state="complete", title="检索结果")
+                                    )
+
+                                # 显示发送给大模型的提示词
+                                final_prompt = debug_info.get("final_prompt", "")
+                                if final_prompt:
+                                    chat_box.insert_msg(
+                                        Markdown(
+                                            f"```\n{final_prompt[:3000]}\n```",
+                                            in_expander=True,
+                                            state="complete",
+                                            title="发送给大模型的提示词",
+                                        )
+                                    )
+                                chat_box.insert_msg("")
+
                             text += d.choices[0].delta.content or ""
                             chat_box.update_msg(
                                 text.replace("\n", "\n\n"), streaming=True, metadata=metadata

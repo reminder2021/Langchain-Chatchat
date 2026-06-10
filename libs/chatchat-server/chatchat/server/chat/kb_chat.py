@@ -76,10 +76,12 @@ async def kb_chat(query: str = Body(..., description="用户输入", examples=["
                 ok, msg = kb.check_embed_model()
                 if not ok:
                     raise ValueError(msg)
+                # 启用Rerank时使用更大的初始检索数量
+                initial_top_k = Settings.kb_settings.INITIAL_SEARCH_TOP_K if Settings.kb_settings.USE_RERANKER else top_k
                 docs = await run_in_threadpool(search_docs,
                                                 query=query,
                                                 knowledge_base_name=kb_name,
-                                                top_k=top_k,
+                                                top_k=initial_top_k,
                                                 score_threshold=score_threshold,
                                                 file_name="",
                                                 metadata={})
@@ -145,31 +147,57 @@ async def kb_chat(query: str = Body(..., description="用户输入", examples=["
                 max_tokens=max_tokens,
                 callbacks=callbacks,
             )
-            # TODO： 视情况使用 API
-            # # 加入reranker
-            # if Settings.kb_settings.USE_RERANKER:
-            #     reranker_model_path = get_model_path(Settings.kb_settings.RERANKER_MODEL)
-            #     reranker_model = LangchainReranker(top_n=top_k,
-            #                                     device=embedding_device(),
-            #                                     max_length=Settings.kb_settings.RERANKER_MAX_LENGTH,
-            #                                     model_name_or_path=reranker_model_path
-            #                                     )
-            #     print("-------------before rerank-----------------")
-            #     print(docs)
-            #     docs = reranker_model.compress_documents(documents=docs,
-            #                                              query=query)
-            #     print("------------after rerank------------------")
-            #     print(docs)
+            # Rerank重排序
+            if Settings.kb_settings.USE_RERANKER and len(docs) > 0:
+                try:
+                    from langchain_core.documents import Document as LCDocument
+                    if Settings.kb_settings.RERANKER_TYPE == "zhipu":
+                        from chatchat.server.reranker.reranker import ZhipuReranker
+                        # 从MODEL_PLATFORMS中获取智谱API Key
+                        api_key = ""
+                        for platform in Settings.model_settings.MODEL_PLATFORMS:
+                            if platform.platform_name == "zhipuai":
+                                api_key = platform.api_key
+                                break
+                        if not api_key:
+                            logger.warning("未找到智谱API Key，跳过Rerank")
+                        else:
+                            reranker = ZhipuReranker(
+                                api_key=api_key,
+                                model=Settings.kb_settings.RERANKER_MODEL,
+                                top_n=top_k,
+                            )
+                            lcdocs = [LCDocument(page_content=d["page_content"], metadata=d.get("metadata", {})) for d in docs]
+                            reranked_docs = reranker.compress_documents(documents=lcdocs, query=query)
+                            docs = [{"page_content": d.page_content, "metadata": d.metadata, "score": d.metadata.get("relevance_score")} for d in reranked_docs]
+                            source_documents = format_reference(kb_name, docs, api_address(is_public=True))
+                            logger.info(f"智谱Rerank完成: {len(lcdocs)} -> {len(docs)} 个文档")
+                    else:
+                        logger.warning(f"不支持的Reranker类型: {Settings.kb_settings.RERANKER_TYPE}")
+                except Exception as e:
+                    logger.error(f"Rerank失败，使用原始结果: {e}")
+
             context = "\n\n".join([doc["page_content"] for doc in docs])
 
             if len(docs) == 0:  # 如果没有找到相关文档，使用empty模板
                 prompt_name = "empty"
             prompt_template = get_prompt_template("rag", prompt_name)
+
+            # 保存原始模板用于调试（因为后续可能会被修改）
+            debug_prompt_template = str(prompt_template)
+
             input_msg = History(role="user", content=prompt_template).to_msg_template(False)
             chat_prompt = ChatPromptTemplate.from_messages(
                 [i.to_msg_template() for i in history] + [input_msg])
 
             chain = chat_prompt | llm
+
+            # 构建最终发送给LLM的提示词（使用保存的原始模板）
+            final_prompt = debug_prompt_template.replace("{{context}}", context).replace("{{question}}", query)
+            logger.info(f"=== RAG 提示词调试 ===")
+            logger.info(f"用户问题: {query}")
+            logger.info(f"context length: {len(context)}")
+            logger.info(f"final_prompt 末尾200字符: ...{final_prompt[-200:]}")
 
             # Begin a task that runs in the background.
             task = asyncio.create_task(wrap_done(
@@ -180,6 +208,22 @@ async def kb_chat(query: str = Body(..., description="用户输入", examples=["
             if len(source_documents) == 0:  # 没有找到相关文档
                 source_documents.append(f"<span style='color:red'>未找到相关文档,该回答为大模型自身能力解答！</span>")
 
+            # 构建调试信息
+            debug_retrieved_docs = []
+            for i, doc in enumerate(docs):
+                debug_retrieved_docs.append({
+                    "index": i + 1,
+                    "page_content": doc.get("page_content", ""),
+                    "score": doc.get("score", None),
+                    "metadata": doc.get("metadata", {}),
+                })
+            debug_info = {
+                "debug_retrieved_docs": debug_retrieved_docs,
+                "debug_context": context,
+                "debug_prompt_template": debug_prompt_template,
+                "debug_final_prompt": final_prompt,
+            }
+
             if stream:
                 # yield documents first
                 ret = OpenAIChatOutput(
@@ -189,10 +233,13 @@ async def kb_chat(query: str = Body(..., description="用户输入", examples=["
                     role="assistant",
                     model=model,
                     docs=source_documents,
+                    debug_info=debug_info,
                 )
                 yield ret.model_dump_json()
 
+                llm_response = ""
                 async for token in callback.aiter():
+                    llm_response += token
                     ret = OpenAIChatOutput(
                         id=f"chat{uuid.uuid4()}",
                         object="chat.completion.chunk",
@@ -201,6 +248,7 @@ async def kb_chat(query: str = Body(..., description="用户输入", examples=["
                         model=model,
                     )
                     yield ret.model_dump_json()
+                logger.info(f"=== LLM 回复 ===\n{llm_response}")
             else:
                 answer = ""
                 async for token in callback.aiter():

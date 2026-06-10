@@ -162,6 +162,24 @@ class KBSettings(BaseFileSettings):
     SEARCH_ENGINE_TOP_K: int = 3
     """搜索引擎匹配结题数量"""
 
+    USE_RERANKER: bool = True
+    """是否启用Rerank重排序，启用后会对接检索结果进行精细化排序，提升检索准确率"""
+
+    RERANKER_TYPE: t.Literal["zhipu", "local"] = "zhipu"
+    """Rerank类型：zhipu=智谱API（推荐），local=本地模型"""
+
+    RERANKER_MODEL: str = "GLM-Rerank"
+    """Rerank模型名称，zhipu类型时为GLM-Rerank，local类型时为本地模型路径"""
+
+    RERANKER_MAX_LENGTH: int = 1024
+    """Rerank模型最大输入长度"""
+
+    RERANKER_TOP_N: int = 5
+    """Rerank后保留的文档数量"""
+
+    INITIAL_SEARCH_TOP_K: int = 20
+    """启用Rerank时初始检索的文档数量（大于VECTOR_SEARCH_TOP_K以提供更多候选）"""
+
     ZH_TITLE_ENHANCE: bool = False
     """是否开启中文标题加强，以及标题增强的相关配置"""
 
@@ -650,8 +668,9 @@ class PromptSettings(BaseFileSettings):
 
     rag: dict = {
         "default": (
-            "【指令】根据已知信息，简洁和专业的来回答问题。"
-            "如果无法从中得到答案，请说 “根据已知信息无法回答该问题”，不允许在答案中添加编造成分，答案请使用中文。\n\n"
+            "【指令】根据已知信息，简洁和专业地来回答问题。"
+            "你可以基于已知信息进行合理推断，但不要编造与已知信息矛盾的内容。"
+            "只有当已知信息与问题完全无关时，才说「根据已知信息无法回答该问题」。答案请使用中文。\n\n"
             "【已知信息】{{context}}\n\n"
             "【问题】{{question}}\n"
             ),

@@ -225,6 +225,23 @@ def kb_chat(api: ApiRequest):
             for d in client.chat.completions.create(messages=messages, model=llm_model, stream=True, extra_body=extra_body):
                 if first:
                     chat_box.update_msg("\n\n".join(d.docs), element_index=0, streaming=False, state="complete")
+
+                    # 显示调试信息（检索结果）
+                    debug_info = getattr(d, "debug_info", None)
+                    if debug_info and isinstance(debug_info, dict):
+                        # 显示检索结果详情
+                        retrieved_docs = debug_info.get("debug_retrieved_docs", [])
+                        if retrieved_docs:
+                            debug_md = ""
+                            for doc in retrieved_docs:
+                                score = doc.get("score", "N/A")
+                                score_str = f"{score:.4f}" if isinstance(score, (int, float)) else str(score)
+                                debug_md += f"**[{doc['index']}]** 相关度: {score_str}\n\n"
+                                debug_md += f"{doc['page_content']}\n\n---\n\n"
+                            chat_box.insert_msg(
+                                Markdown(debug_md, in_expander=True, state="complete", title="检索结果详情")
+                            )
+
                     chat_box.update_msg("", streaming=False)
                     first = False
                     continue
