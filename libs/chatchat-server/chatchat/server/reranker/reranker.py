@@ -19,7 +19,7 @@ class ZhipuReranker(BaseDocumentCompressor):
 
     api_key: str = Field()
     api_base_url: str = Field(default="https://open.bigmodel.cn/api/paas/v4")
-    model: str = Field(default="GLM-Rerank")
+    model: str = Field(default="rerank")
     top_n: int = Field(default=5)
     _client: Any = PrivateAttr()
 
@@ -27,7 +27,7 @@ class ZhipuReranker(BaseDocumentCompressor):
         self,
         api_key: str,
         api_base_url: str = "https://open.bigmodel.cn/api/paas/v4",
-        model: str = "GLM-Rerank",
+        model: str = "rerank",
         top_n: int = 5,
     ):
         super().__init__(
@@ -36,7 +36,9 @@ class ZhipuReranker(BaseDocumentCompressor):
             model=model,
             top_n=top_n,
         )
-        self._client = httpx.Client(timeout=30.0)
+        # 基类 BaseDocumentCompressor 是 pydantic v1 model，不允许直接给未声明字段赋值，
+        # 用 object.__setattr__ 绕过校验来持有 httpx.Client
+        object.__setattr__(self, "_client", httpx.Client(timeout=30.0))
 
     def compress_documents(
         self,
@@ -97,6 +99,58 @@ class ZhipuReranker(BaseDocumentCompressor):
             logger.error(f"智谱Rerank API调用失败: {e}")
             # 降级：返回原始文档
             return doc_list[:self.top_n]
+
+
+def rerank_docs(docs: Sequence[dict], query: str, top_n: int = None) -> Sequence[dict]:
+    """对检索到的文档做智谱GLM-Rerank重排序，提升检索质量。
+
+    供「知识库搜索工具」与「RAG 对话(kb_chat)」共用，避免重复实现。
+    Args:
+        docs: search_docs 返回的 list[dict]，每个含 page_content / metadata
+        query: 用户查询
+        top_n: 重排后保留的条数，默认用配置 INITIAL_SEARCH_TOP_K
+    Returns:
+        重排后的 list[dict]（含 page_content / metadata / score）。失败时原样返回 docs。
+    """
+    if not docs:
+        return docs
+    try:
+        from langchain_core.documents import Document as LCDocument
+        from chatchat.settings import Settings
+
+        if Settings.kb_settings.RERANKER_TYPE != "zhipu":
+            logger.warning(f"不支持的Reranker类型: {Settings.kb_settings.RERANKER_TYPE}，跳过Rerank")
+            return docs
+
+        api_key = ""
+        for platform in Settings.model_settings.MODEL_PLATFORMS:
+            if platform.platform_name == "zhipuai":
+                api_key = platform.api_key
+                break
+        if not api_key:
+            logger.warning("未找到智谱API Key，跳过Rerank")
+            return docs
+
+        top_n = top_n or Settings.kb_settings.INITIAL_SEARCH_TOP_K
+        reranker = ZhipuReranker(
+            api_key=api_key,
+            model=Settings.kb_settings.RERANKER_MODEL,
+            top_n=min(top_n, len(docs)),
+        )
+        lcdocs = [LCDocument(page_content=d["page_content"], metadata=d.get("metadata", {})) for d in docs]
+        reranked = reranker.compress_documents(documents=lcdocs, query=query)
+        logger.info(f"智谱Rerank完成: {len(lcdocs)} -> {len(reranked)} 个文档")
+        return [
+            {
+                "page_content": d.page_content,
+                "metadata": d.metadata,
+                "score": d.metadata.get("relevance_score"),
+            }
+            for d in reranked
+        ]
+    except Exception as e:
+        logger.error(f"Rerank失败，使用原始结果: {e}")
+        return docs
 
 
 class LangchainReranker(BaseDocumentCompressor):

@@ -61,7 +61,16 @@ class BaseToolOutput(Serializable):
         data_alias: str = "",
         **extras: Any,
     ) -> None:
+        # format 可以是 "json"，也可以是自定义格式化函数（形如 fn(self)->str）。
+        # callable 不能交给 pydantic 的 str 字段校验，需单独存到 _format_callable
+        # （__str__ 会优先使用它），用 object.__setattr__ 绕过 pydantic v1 的属性校验。
+        format_callable: Optional[Callable] = None
+        if callable(format):
+            format_callable = format
+            format = None
         super().__init__(data=data, format=format, data_alias=data_alias, **extras)
+        if format_callable is not None:
+            object.__setattr__(self, "_format_callable", format_callable)
 
     def __str__(self) -> str:
         if self.format == "json":

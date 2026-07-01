@@ -27,6 +27,18 @@ from chatchat.webui_pages.utils import *
 chat_box = ChatBox(assistant_avatar=get_img_base64("chatchat_icon_blue_square_v2.png"))
 
 
+def _safe_insert(box, element, **kwargs):
+    """容错版 insert_msg：agent 流式迭代中 streamlit_chatbox 的 _chat_containers 在某些
+    时序下可能为空，直接调 insert_msg 会抛 IndexError 中断整个对话。容器不就绪时降级跳过，
+    检索/回答流程照常进行（元素内容仍会经 update_msg 呈现）。"""
+    try:
+        if getattr(box, "_chat_containers", None):
+            return box.insert_msg(element, **kwargs)
+    except Exception:
+        pass
+    return None
+
+
 def save_session(conv_name: str = None):
     """save session state to chat context"""
     chat_box.context_from_session(
@@ -157,6 +169,12 @@ def dialogue_page(
     ctx.setdefault("temperature", Settings.model_settings.TEMPERATURE)
     st.session_state.setdefault("cur_conv_name", chat_box.cur_chat_name)
     st.session_state.setdefault("last_conv_name", chat_box.cur_chat_name)
+
+    # 默认启用 Agent 并挂载知识库搜索工具，让大模型自主判断是否做 RAG 检索
+    if "use_agent" not in st.session_state:
+        st.session_state["use_agent"] = True
+    if "selected_tools" not in st.session_state:
+        st.session_state["selected_tools"] = ["search_local_knowledgebase"]
 
     # sac on_change callbacks not working since st>=1.34
     if st.session_state.cur_conv_name != st.session_state.last_conv_name:
@@ -451,7 +469,7 @@ def dialogue_page(
                     if d.status == AgentStatus.error:
                         st.error(d.choices[0].delta.content)
                     elif d.status == AgentStatus.llm_start:
-                        chat_box.insert_msg("正在解读工具输出结果...")
+                        _safe_insert(chat_box,"正在解读工具输出结果...")
                         text = d.choices[0].delta.content or ""
                     elif d.status == AgentStatus.llm_new_token:
                         text += d.choices[0].delta.content or ""
@@ -471,7 +489,7 @@ def dialogue_page(
                         }
                         formatted_json = json.dumps(formatted_data, indent=2, ensure_ascii=False)
                         text = """\n```{}\n```\n""".format(formatted_json)
-                        chat_box.insert_msg( # TODO: insert text directly not shown
+                        _safe_insert(chat_box, # TODO: insert text directly not shown
                             Markdown(text, title="Function call", in_expander=True, expanded=True, state="running"))
                     elif d.status == AgentStatus.tool_end:
                         tool_output = d.choices[0].delta.tool_calls[0].tool_output
@@ -481,7 +499,7 @@ def dialogue_page(
                                 if not url.startswith("http"):
                                     url = f"{api.base_url}/media/{url}"
                                 # md语法不支持，所以pos 跳过
-                                chat_box.insert_msg(Image(url), pos=-2)
+                                _safe_insert(chat_box,Image(url), pos=-2)
                             chat_box.update_msg(text, streaming=False, expanded=True, state="complete")
                         else:
                             text += """\n```\nObservation:\n{}\n```\n""".format(tool_output)
@@ -499,7 +517,7 @@ def dialogue_page(
                                                                     api_base_url=api_address(is_public=True))
                                 context = "\n".join(source_documents)
 
-                            chat_box.insert_msg(
+                            _safe_insert(chat_box,
                                 Markdown(
                                     context,
                                     in_expander=True,
@@ -507,10 +525,10 @@ def dialogue_page(
                                     title="参考资料",
                                 )
                             )
-                            chat_box.insert_msg("")
+                            _safe_insert(chat_box,"")
                         elif getattr(d, "tool_call", None) == "text2images":  # TODO：特定工具特别处理，需要更通用的处理方式
                             for img in d.tool_output.get("images", []):
-                                chat_box.insert_msg(Image(f"{api.base_url}/media/{img}"), pos=-2)
+                                _safe_insert(chat_box,Image(f"{api.base_url}/media/{img}"), pos=-2)
                         else:
                             # 检查是否有debug_info（知识库问答调试信息）
                             debug_info = getattr(d, "debug_info", None)
@@ -524,14 +542,14 @@ def dialogue_page(
                                         score_str = f"{score:.4f}" if isinstance(score, (int, float)) else str(score)
                                         debug_md += f"**[{doc['index']}]** (相关度: {score_str})\n\n"
                                         debug_md += f"{doc['page_content'][:500]}\n\n---\n\n"
-                                    chat_box.insert_msg(
+                                    _safe_insert(chat_box,
                                         Markdown(debug_md, in_expander=True, state="complete", title="检索结果")
                                     )
 
                                 # 显示发送给大模型的提示词
                                 final_prompt = debug_info.get("final_prompt", "")
                                 if final_prompt:
-                                    chat_box.insert_msg(
+                                    _safe_insert(chat_box,
                                         Markdown(
                                             f"```\n{final_prompt[:3000]}\n```",
                                             in_expander=True,
@@ -539,7 +557,7 @@ def dialogue_page(
                                             title="发送给大模型的提示词",
                                         )
                                     )
-                                chat_box.insert_msg("")
+                                _safe_insert(chat_box,"")
 
                             text += d.choices[0].delta.content or ""
                             chat_box.update_msg(
@@ -547,13 +565,13 @@ def dialogue_page(
                             )
                     chat_box.update_msg(text, streaming=False, metadata=metadata)
             except Exception as e:
-                st.error(e.body)
+                st.error(getattr(e, "body", None) or str(e))
         else:
             try:
                 d =client.chat.completions.create(**params)
                 chat_box.update_msg(d.choices[0].message.content or "", streaming=False)
             except Exception as e:
-                st.error(e.body)
+                st.error(getattr(e, "body", None) or str(e))
 
         # if os.path.exists("tmp/image.jpg"):
         #     with open("tmp/image.jpg", "rb") as image_file:

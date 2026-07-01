@@ -168,8 +168,8 @@ class KBSettings(BaseFileSettings):
     RERANKER_TYPE: t.Literal["zhipu", "local"] = "zhipu"
     """Rerank类型：zhipu=智谱API（推荐），local=本地模型"""
 
-    RERANKER_MODEL: str = "GLM-Rerank"
-    """Rerank模型名称，zhipu类型时为GLM-Rerank，local类型时为本地模型路径"""
+    RERANKER_MODEL: str = "rerank"
+    """Rerank模型名称，zhipu类型时为 rerank，local类型时为本地模型路径"""
 
     RERANKER_MAX_LENGTH: int = 1024
     """Rerank模型最大输入长度"""
